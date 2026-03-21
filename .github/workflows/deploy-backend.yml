@@ -25,6 +25,16 @@ jobs:
           chmod 600 lightsail.pem
           ssh-keygen -y -f lightsail.pem > /dev/null
 
+      - name: Ensure remote rsync is installed
+        run: |
+          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@13.233.227.15 << 'EOF'
+            set -e
+            if ! command -v rsync >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y rsync
+            fi
+          EOF
+
       - name: Sync backend code to server
         run: |
           rsync -avz --delete \
