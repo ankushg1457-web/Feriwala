@@ -1,0 +1,47 @@
+# Credentials & secrets
+backend/.env
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+backend/uploads/
+admin-portal/build/
+admin-portal/node_modules/
+**/build/
+**/.dart_tool/
+**/android/.gradle/
+**/.gradle/
+**/android/app/build/
+**/android/local.properties
+**/android/key.properties
+
+# Flutter
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/pubspec.lock
+**/ios/
+
+# Logs
+*.log
+**/logs/
+npm-debug.log*
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# PM2
+.pm2/

@@ -1,0 +1,175 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../providers/cart_provider.dart';
+import '../services/api_service.dart';
+
+class CheckoutScreen extends StatefulWidget {
+  const CheckoutScreen({super.key});
+
+  @override
+  State<CheckoutScreen> createState() => _CheckoutScreenState();
+}
+
+class _CheckoutScreenState extends State<CheckoutScreen> {
+  String _paymentMethod = 'cod';
+  bool _placing = false;
+  int _selectedAddressIndex = 0;
+
+  Future<void> _placeOrder() async {
+    final cart = context.read<CartProvider>();
+    final auth = context.read<AuthProvider>();
+
+    if (cart.items.isEmpty) return;
+    if (auth.user == null || (auth.user!['addresses'] as List?)?.isEmpty != false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add a delivery address first'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _placing = true);
+    try {
+      final addresses = auth.user!['addresses'] as List;
+      final address = addresses[_selectedAddressIndex];
+
+      final res = await ApiService().post('/orders', body: {
+        'shopId': cart.shopId,
+        'items': cart.items.map((i) => i.toOrderItem()).toList(),
+        'deliveryAddress': address,
+        'paymentMethod': _paymentMethod,
+        if (cart.promoCode != null) 'promoCode': cart.promoCode,
+      });
+
+      cart.clearCart();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order placed successfully!'), backgroundColor: Colors.green),
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+        Navigator.pushNamed(context, '/order-tracking', arguments: res['data']['id']);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _placing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartProvider>();
+    final auth = context.watch<AuthProvider>();
+    final addresses = (auth.user?['addresses'] as List?) ?? [];
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Checkout')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Delivery Address
+            const Text('Delivery Address', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            if (addresses.isEmpty)
+              const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('No addresses saved. Add one in your profile.'))),
+            ...addresses.asMap().entries.map((entry) {
+              final i = entry.key;
+              final addr = entry.value;
+              return RadioListTile<int>(
+                value: i,
+                groupValue: _selectedAddressIndex,
+                onChanged: (v) => setState(() => _selectedAddressIndex = v!),
+                title: Text(addr['label'] ?? 'Address ${i + 1}'),
+                subtitle: Text('${addr['addressLine1']}, ${addr['city']} - ${addr['pincode']}'),
+                activeColor: const Color(0xFFF47721),
+              );
+            }),
+
+            const SizedBox(height: 16),
+
+            // Payment Method
+            const Text('Payment Method', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ...['cod', 'online', 'upi'].map((method) => RadioListTile<String>(
+                  value: method,
+                  groupValue: _paymentMethod,
+                  onChanged: (v) => setState(() => _paymentMethod = v!),
+                  title: Text({
+                    'cod': 'Cash on Delivery',
+                    'online': 'Online Payment',
+                    'upi': 'UPI',
+                  }[method]!),
+                  activeColor: const Color(0xFFF47721),
+                )),
+
+            const SizedBox(height: 16),
+
+            // Order Summary
+            const Text('Order Summary', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Card(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    ...cart.items.map((item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(child: Text('${item.name} x${item.quantity}', maxLines: 1, overflow: TextOverflow.ellipsis)),
+                              Text('₹${item.total.toStringAsFixed(2)}'),
+                            ],
+                          ),
+                        )),
+                    const Divider(),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      const Text('Subtotal'),
+                      Text('₹${cart.subtotal.toStringAsFixed(2)}'),
+                    ]),
+                    if (cart.discount > 0)
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        const Text('Discount', style: TextStyle(color: Colors.green)),
+                        Text('-₹${cart.discount.toStringAsFixed(2)}', style: const TextStyle(color: Colors.green)),
+                      ]),
+                    const Divider(),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      const Text('Total', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text('₹${cart.total.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFF47721))),
+                    ]),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        child: SizedBox(
+          height: 50,
+          child: ElevatedButton(
+            onPressed: _placing ? null : _placeOrder,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF47721),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: _placing
+                ? const CircularProgressIndicator(color: Colors.white)
+                : Text('Place Order - ₹${cart.total.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ),
+    );
+  }
+}

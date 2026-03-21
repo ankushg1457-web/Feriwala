@@ -1,0 +1,47 @@
+name: Deploy Backend to Lightsail
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to AWS Lightsail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write SSH Key
+        run: |
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > lightsail.pem
+          chmod 600 lightsail.pem
+
+      - name: Sync backend code to server
+        run: |
+          rsync -avz --delete \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude 'uploads' \
+            -e "ssh -i lightsail.pem -o StrictHostKeyChecking=no" \
+            ./backend/ bitnami@13.233.227.15:/home/bitnami/feriwala/backend/
+
+      - name: Install dependencies and restart
+        run: |
+          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@13.233.227.15 << 'EOF'
+            set -e
+            cd /home/bitnami/feriwala/backend
+            npm ci --production
+            cd ..
+            pm2 delete feriwala-api 2>/dev/null || true
+            pm2 start ecosystem.config.js
+            pm2 save
+            echo "=== Deployment complete ==="
+            pm2 status
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f lightsail.pem

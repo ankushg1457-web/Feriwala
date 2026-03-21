@@ -1,0 +1,2 @@
+rootProject.name = 'feriwala_shop'
+include ':app'
