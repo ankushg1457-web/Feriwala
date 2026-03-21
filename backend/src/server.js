@@ -82,22 +82,49 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
+async function connectDatabases() {
+  // Connect MongoDB with retry
+  const mongoRetry = async (attempts = 5) => {
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        await connectMongoDB();
+        console.log('MongoDB connected');
+        return;
+      } catch (err) {
+        console.error(`MongoDB connection attempt ${i}/${attempts} failed:`, err.message);
+        if (i < attempts) await new Promise(r => setTimeout(r, 10000));
+      }
+    }
+    console.error('MongoDB unavailable — routes requiring it will error until reconnected');
+  };
+
+  // Connect PostgreSQL with retry
+  const pgRetry = async (attempts = 5) => {
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        await connectPostgres();
+        await syncModels();
+        console.log('PostgreSQL connected and models synced');
+        return;
+      } catch (err) {
+        console.error(`PostgreSQL connection attempt ${i}/${attempts} failed:`, err.message);
+        if (i < attempts) await new Promise(r => setTimeout(r, 10000));
+      }
+    }
+    console.error('PostgreSQL unavailable — routes requiring it will error until reconnected');
+  };
+
+  await Promise.all([mongoRetry(), pgRetry()]);
+}
+
 async function startServer() {
-  try {
-    await connectMongoDB();
-    console.log('MongoDB connected');
+  // Start HTTP server immediately so the port is open
+  server.listen(PORT, () => {
+    console.log(`Feriwala API server running on port ${PORT}`);
+  });
 
-    await connectPostgres();
-    await syncModels();
-    console.log('PostgreSQL connected and models synced');
-
-    server.listen(PORT, () => {
-      console.log(`Feriwala API server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
+  // Connect databases in background (non-fatal)
+  connectDatabases().catch(err => console.error('DB connection error:', err.message));
 }
 
 startServer();
