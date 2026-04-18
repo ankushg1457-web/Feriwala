@@ -26,7 +26,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    const res = await api.post('/auth/login', { email, password });
+    const res = await api.post('/auth/login', { credential: email, email, password });
     if (res.data.data.user.role !== 'admin') {
       throw new Error('Admin access only');
     }

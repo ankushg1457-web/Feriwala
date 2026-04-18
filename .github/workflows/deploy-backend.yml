@@ -14,26 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deployment tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rsync openssh-client
-
       - name: Write SSH Key
         run: |
           printf '%s' "${{ secrets.LIGHTSAIL_SSH_KEY }}" | tr -d '\r' > lightsail.pem
           chmod 600 lightsail.pem
           ssh-keygen -y -f lightsail.pem > /dev/null
-
-      - name: Ensure remote rsync is installed
-        run: |
-          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@13.233.227.15 << 'EOF'
-            set -e
-            if ! command -v rsync >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y rsync
-            fi
-          EOF
 
       - name: Sync backend code to server
         run: |

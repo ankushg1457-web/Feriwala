@@ -108,6 +108,7 @@ async function runTests() {
   console.log('4. User Login (with email)...');
   const login = await testFeature('/api/auth/login', 'POST', {
     credential: email,
+    email: email,
     password: 'TestPass123!@'
   });
   
@@ -127,6 +128,7 @@ async function runTests() {
     console.log('4b. User Login (with Login ID)...');
     loginWithId = await testFeature('/api/auth/login', 'POST', {
       credential: loginId,
+      email: loginId,
       password: 'TestPass123!@'
     });
     

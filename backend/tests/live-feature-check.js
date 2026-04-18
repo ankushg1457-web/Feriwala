@@ -66,6 +66,7 @@ async function main() {
 
   console.log('step: login');
   const login = await request('POST', '/auth/login', {
+    credential: user.email,
     email: user.email,
     password: user.password,
   });
