@@ -25,12 +25,7 @@ jobs:
 
       - name: Install portal dependencies
         working-directory: admin-portal
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm install --no-audit --no-fund
 
       - name: Build portal
         working-directory: admin-portal
