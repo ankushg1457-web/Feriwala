@@ -31,11 +31,21 @@ jobs:
         working-directory: admin-portal
         run: npm run build
 
+      - name: Upload built portal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shop-owner-portal-build
+          path: admin-portal/build
+          retention-days: 7
+
       - name: Write SSH key
         env:
           LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         run: |
-          test -n "$LIGHTSAIL_SSH_KEY"
+          if [ -z "$LIGHTSAIL_SSH_KEY" ]; then
+            echo "::error::Missing LIGHTSAIL_SSH_KEY repository secret. Add the Lightsail private key in GitHub Actions secrets, then rerun this workflow."
+            exit 1
+          fi
           printf '%s' "$LIGHTSAIL_SSH_KEY" | tr -d '\r' > lightsail.pem
           chmod 600 lightsail.pem
           ssh-keygen -y -f lightsail.pem > /dev/null
