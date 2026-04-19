@@ -1,42 +1,59 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import api from '../services/api';
 
 const AuthContext = createContext(null);
+const TOKEN_KEY = 'feriwala_portal_token';
+const LEGACY_TOKEN_KEY = 'feriwala_admin_token';
+const ALLOWED_ROLES = ['admin', 'shop_admin'];
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('feriwala_admin_token');
-    if (token) {
-      api.get('/auth/profile')
-        .then(res => {
-          if (res.data.data.role === 'admin') {
-            setUser(res.data.data);
-          } else {
-            localStorage.removeItem('feriwala_admin_token');
-          }
-        })
-        .catch(() => localStorage.removeItem('feriwala_admin_token'))
-        .finally(() => setLoading(false));
-    } else {
+    const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
+
+    if (!token) {
       setLoading(false);
+      return;
     }
+
+    localStorage.setItem(TOKEN_KEY, token);
+
+    api.get('/auth/profile')
+      .then((res) => {
+        const profile = res.data.data;
+        if (ALLOWED_ROLES.includes(profile.role)) {
+          setUser(profile);
+        } else {
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(LEGACY_TOKEN_KEY);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(LEGACY_TOKEN_KEY);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const login = async (email, password) => {
     const res = await api.post('/auth/login', { credential: email, email, password });
-    if (res.data.data.user.role !== 'admin') {
-      throw new Error('Admin access only');
+    const { user: signedInUser, accessToken } = res.data.data;
+
+    if (!ALLOWED_ROLES.includes(signedInUser.role)) {
+      throw new Error('Portal access is available only for admins and shop owners');
     }
-    localStorage.setItem('feriwala_admin_token', res.data.data.accessToken);
-    setUser(res.data.data.user);
+
+    localStorage.setItem(TOKEN_KEY, accessToken);
+    localStorage.setItem(LEGACY_TOKEN_KEY, accessToken);
+    setUser(signedInUser);
     return res.data.data;
   };
 
   const logout = () => {
-    localStorage.removeItem('feriwala_admin_token');
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
     setUser(null);
   };
 
@@ -48,3 +65,4 @@ export function AuthProvider({ children }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+

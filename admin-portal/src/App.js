@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
@@ -10,11 +10,12 @@ import ShopForm from './pages/ShopForm';
 import Users from './pages/Users';
 import Categories from './pages/Categories';
 import Orders from './pages/Orders';
+import ShopProducts from './pages/ShopProducts';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -24,6 +25,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
+        <Route path="products" element={<ShopProducts />} />
         <Route path="shops" element={<Shops />} />
         <Route path="shops/new" element={<ShopForm />} />
         <Route path="shops/:id/edit" element={<ShopForm />} />
@@ -31,6 +33,7 @@ function AppRoutes() {
         <Route path="categories" element={<Categories />} />
         <Route path="orders" element={<Orders />} />
       </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
@@ -38,10 +41,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <HashRouter>
         <Toaster position="top-right" />
         <AppRoutes />
-      </BrowserRouter>
+      </HashRouter>
     </AuthProvider>
   );
 }
+

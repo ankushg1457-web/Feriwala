@@ -1,0 +1,68 @@
+name: Deploy Shop Owner Portal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin-portal/**'
+      - 'deployment/nginx.conf'
+      - '.github/workflows/deploy-portal.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-portal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin-portal/package-lock.json
+
+      - name: Install portal dependencies
+        working-directory: admin-portal
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build portal
+        working-directory: admin-portal
+        run: npm run build
+
+      - name: Write SSH key
+        env:
+          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+        run: |
+          test -n "$LIGHTSAIL_SSH_KEY"
+          printf '%s' "$LIGHTSAIL_SSH_KEY" | tr -d '\r' > lightsail.pem
+          chmod 600 lightsail.pem
+          ssh-keygen -y -f lightsail.pem > /dev/null
+
+      - name: Ensure remote directories exist
+        run: |
+          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@65.2.9.216 \
+            "mkdir -p /home/bitnami/feriwala/admin-portal/build"
+
+      - name: Sync built portal
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i lightsail.pem -o StrictHostKeyChecking=no" \
+            admin-portal/build/ bitnami@65.2.9.216:/home/bitnami/feriwala/admin-portal/build/
+
+      - name: Refresh nginx and verify
+        run: |
+          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@65.2.9.216 \
+            "sudo nginx -t && sudo systemctl reload nginx"
+          curl --fail --silent --show-error http://65.2.9.216/ > /tmp/portal.html
+          grep -q 'Feriwala Portal' /tmp/portal.html
+
+      - name: Cleanup key
+        if: always()
+        run: rm -f lightsail.pem

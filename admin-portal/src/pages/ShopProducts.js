@@ -1,0 +1,383 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import api from '../services/api';
+import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
+
+const initialForm = {
+  name: '',
+  shortDescription: '',
+  description: '',
+  brand: '',
+  categoryId: '',
+  subcategoryId: '',
+  mrp: '',
+  sellingPrice: '',
+  quantity: '0',
+  tags: '',
+  highlights: '',
+  specificationsText: '',
+  videoUrl: '',
+};
+
+const parseList = (value) =>
+  String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const parseSpecifications = (value) => {
+  return String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reduce((acc, line) => {
+      const [key, ...rest] = line.split(':');
+      if (!key || rest.length === 0) return acc;
+      acc[key.trim()] = rest.join(':').trim();
+      return acc;
+    }, {});
+};
+
+const formatCurrency = (value) => `৳${Number(value || 0).toLocaleString()}`;
+
+export default function ShopProducts() {
+  const { user } = useAuth();
+  const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [form, setForm] = useState(initialForm);
+  const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [images, setImages] = useState([]);
+  const [video, setVideo] = useState(null);
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [user?.shopId]);
+
+  const selectedCategory = useMemo(
+    () => categories.find((cat) => String(cat.id) === String(form.categoryId)),
+    [categories, form.categoryId],
+  );
+
+  const subcategories = selectedCategory?.subcategories || [];
+
+  const fetchCategories = async () => {
+    try {
+      const res = await api.get('/products/categories/all');
+      setCategories(res.data.data || []);
+    } catch (err) {
+      toast.error('Failed to load categories');
+    }
+  };
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      const params = { limit: 100 };
+      if (user?.shopId) params.shopId = user.shopId;
+      const res = await api.get('/products', { params });
+      setProducts(res.data.data || []);
+    } catch (err) {
+      toast.error('Failed to load products');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setForm(initialForm);
+    setEditingId(null);
+    setImages([]);
+    setVideo(null);
+  };
+
+  const startEdit = (product) => {
+    setEditingId(product.id);
+    setForm({
+      name: product.name || '',
+      shortDescription: product.shortDescription || '',
+      description: product.description || '',
+      brand: product.brand || '',
+      categoryId: product.categoryId ? String(product.categoryId) : '',
+      subcategoryId: product.subcategoryId ? String(product.subcategoryId) : '',
+      mrp: product.mrp || '',
+      sellingPrice: product.sellingPrice || '',
+      quantity: product.inventory?.quantity ?? '0',
+      tags: Array.isArray(product.tags) ? product.tags.join(', ') : '',
+      highlights: Array.isArray(product.highlights) ? product.highlights.join(', ') : '',
+      specificationsText: product.specifications
+        ? Object.entries(product.specifications).map(([key, value]) => `${key}: ${value}`).join('\n')
+        : '',
+      videoUrl: product.videoUrl || '',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+      ...(name === 'categoryId' ? { subcategoryId: '' } : {}),
+    }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+
+    try {
+      const payload = {
+        name: form.name,
+        shortDescription: form.shortDescription,
+        description: form.description,
+        brand: form.brand,
+        categoryId: Number(form.categoryId),
+        subcategoryId: form.subcategoryId ? Number(form.subcategoryId) : undefined,
+        mrp: Number(form.mrp),
+        sellingPrice: Number(form.sellingPrice),
+        quantity: Number(form.quantity || 0),
+        tags: parseList(form.tags),
+        highlights: parseList(form.highlights),
+        specifications: parseSpecifications(form.specificationsText),
+        videoUrl: form.videoUrl || undefined,
+      };
+
+      let productId = editingId;
+
+      if (editingId) {
+        await api.put(`/products/${editingId}`, payload);
+        await api.put(`/products/${editingId}/inventory`, { quantity: Number(form.quantity || 0) });
+      } else {
+        const res = await api.post('/products', payload);
+        productId = res.data.data.id;
+      }
+
+      if (productId && (images.length > 0 || video)) {
+        const mediaData = new FormData();
+        images.forEach((file) => mediaData.append('images', file));
+        if (video) mediaData.append('video', video);
+        await api.post(`/products/${productId}/media`, mediaData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      }
+
+      toast.success(editingId ? 'Product updated' : 'Product created');
+      resetForm();
+      fetchProducts();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save product');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleStatus = async (product) => {
+    try {
+      await api.put(`/products/${product.id}`, { isActive: !product.isActive });
+      toast.success(product.isActive ? 'Product hidden' : 'Product activated');
+      fetchProducts();
+    } catch (err) {
+      toast.error('Failed to update status');
+    }
+  };
+
+  const productCount = products.length;
+  const activeCount = products.filter((product) => product.isActive).length;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-800">Product Listing Portal</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Shop owners can now manage products here using their existing portal credentials.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-100">
+          <p className="text-sm text-gray-500">Total products</p>
+          <p className="text-2xl font-bold text-gray-800 mt-1">{productCount}</p>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-100">
+          <p className="text-sm text-gray-500">Active listings</p>
+          <p className="text-2xl font-bold text-gray-800 mt-1">{activeCount}</p>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-100">
+          <p className="text-sm text-gray-500">Assigned shop</p>
+          <p className="text-lg font-semibold text-gray-800 mt-1">{user?.shopId || 'Admin view'}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+        <div className="xl:col-span-2 bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <h3 className="text-lg font-semibold text-gray-800">{editingId ? 'Edit product' : 'Create product'}</h3>
+            {editingId && (
+              <button onClick={resetForm} className="text-sm text-gray-500 hover:text-gray-800">
+                Clear form
+              </button>
+            )}
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Product name</label>
+              <input name="name" value={form.name} onChange={handleChange} required className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Short description</label>
+              <textarea name="shortDescription" value={form.shortDescription} onChange={handleChange} rows="2" className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Full description</label>
+              <textarea name="description" value={form.description} onChange={handleChange} rows="4" className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Brand</label>
+                <input name="brand" value={form.brand} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Stock quantity</label>
+                <input name="quantity" type="number" min="0" value={form.quantity} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select name="categoryId" value={form.categoryId} onChange={handleChange} required className="w-full px-3 py-2 border rounded-lg">
+                  <option value="">Select category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Subcategory</label>
+                <select name="subcategoryId" value={form.subcategoryId} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                  <option value="">Optional</option>
+                  {subcategories.map((subcategory) => (
+                    <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">MRP</label>
+                <input name="mrp" type="number" min="0" step="0.01" value={form.mrp} onChange={handleChange} required className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Selling price</label>
+                <input name="sellingPrice" type="number" min="0" step="0.01" value={form.sellingPrice} onChange={handleChange} required className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+              <input name="tags" value={form.tags} onChange={handleChange} placeholder="fresh, organic, bestseller" className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Highlights</label>
+              <input name="highlights" value={form.highlights} onChange={handleChange} placeholder="Free delivery, premium quality" className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Specifications</label>
+              <textarea name="specificationsText" value={form.specificationsText} onChange={handleChange} rows="3" placeholder="Weight: 1kg&#10;Origin: Dhaka" className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Video URL</label>
+              <input name="videoUrl" value={form.videoUrl} onChange={handleChange} placeholder="https://..." className="w-full px-3 py-2 border rounded-lg" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Images</label>
+              <input type="file" accept="image/*" multiple onChange={(e) => setImages(Array.from(e.target.files || []))} className="w-full text-sm" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Promo video</label>
+              <input type="file" accept="video/*" onChange={(e) => setVideo(e.target.files?.[0] || null)} className="w-full text-sm" />
+            </div>
+
+            <button type="submit" disabled={saving} className="w-full py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 disabled:opacity-50">
+              {saving ? 'Saving...' : editingId ? 'Update product' : 'Create product'}
+            </button>
+          </form>
+        </div>
+
+        <div className="xl:col-span-3 bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <h3 className="text-lg font-semibold text-gray-800">Current listings</h3>
+            <button onClick={fetchProducts} className="text-sm text-primary-600 hover:underline">
+              Refresh
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="text-gray-500">Loading products...</p>
+          ) : products.length === 0 ? (
+            <p className="text-gray-500">No products listed yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {products.map((product) => (
+                <div key={product.id} className="border border-gray-200 rounded-xl p-4">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                    <div className="flex gap-4 min-w-0">
+                      <img
+                        src={product.images?.[0] || 'https://placehold.co/96x96?text=Item'}
+                        alt={product.name}
+                        className="w-24 h-24 rounded-lg object-cover border"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-semibold text-gray-800">{product.name}</h4>
+                          <span className={`px-2 py-1 text-xs rounded-full ${product.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
+                            {product.isActive ? 'Active' : 'Hidden'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">{product.shortDescription || product.description || 'No description added yet.'}</p>
+                        <div className="flex flex-wrap gap-2 mt-2 text-xs text-gray-600">
+                          <span className="bg-gray-100 rounded px-2 py-1">{product.category?.name || 'Uncategorized'}</span>
+                          {product.subcategory?.name && <span className="bg-gray-100 rounded px-2 py-1">{product.subcategory.name}</span>}
+                          <span className="bg-gray-100 rounded px-2 py-1">Stock: {product.inventory?.quantity ?? 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-left md:text-right">
+                      <p className="text-lg font-bold text-gray-800">{formatCurrency(product.sellingPrice)}</p>
+                      <p className="text-sm text-gray-500 line-through">{formatCurrency(product.mrp)}</p>
+                      <div className="mt-3 flex flex-wrap gap-2 md:justify-end">
+                        <button onClick={() => startEdit(product)} className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm">
+                          Edit
+                        </button>
+                        <button onClick={() => toggleStatus(product)} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm">
+                          {product.isActive ? 'Hide' : 'Activate'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
