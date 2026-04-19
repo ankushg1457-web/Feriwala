@@ -5,20 +5,65 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
 jobs:
   deploy:
     name: Deploy to AWS Lightsail
     runs-on: ubuntu-latest
+    env:
+      LIGHTSAIL_INSTANCE_NAME: ${{ vars.AWS_LIGHTSAIL_INSTANCE_NAME || secrets.AWS_LIGHTSAIL_INSTANCE_NAME || 'Feriwala' }}
+      AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION || 'ap-south-1' }}
+      SSH_USER: bitnami
+      SSH_HOST: 65.2.9.216
     steps:
       - uses: actions/checkout@v4
 
-      - name: Write SSH Key
+      - name: Configure AWS credentials
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || secrets.AWS_REGION || 'ap-south-1' }}
+
+      - name: Resolve server SSH access
+        env:
+          LIGHTSAIL_SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
         run: |
-          printf '%s' "${{ secrets.LIGHTSAIL_SSH_KEY }}" | tr -d '\r' > lightsail.pem
-          chmod 600 lightsail.pem
-          ssh-keygen -y -f lightsail.pem > /dev/null
+          set -euo pipefail
+          if [ -n "$LIGHTSAIL_SSH_KEY" ]; then
+            printf '%s' "$LIGHTSAIL_SSH_KEY" | tr -d '\r' > lightsail.pem
+            chmod 600 lightsail.pem
+            {
+              echo "SSH_USER=$SSH_USER"
+              echo "SSH_HOST=$SSH_HOST"
+              echo "SSH_OPTS=-i lightsail.pem -o StrictHostKeyChecking=no"
+            } >> "$GITHUB_ENV"
+          elif aws sts get-caller-identity >/dev/null 2>&1; then
+            aws lightsail get-instance-access-details \
+              --region "$AWS_REGION" \
+              --instance-name "$LIGHTSAIL_INSTANCE_NAME" \
+              > access.json
+            python - <<'PY' >> "$GITHUB_ENV"
+            import json
+            from pathlib import Path
+            payload = json.loads(Path('access.json').read_text())
+            details = payload['accessDetails']
+            Path('lightsail.pem').write_text(details['privateKey'])
+            cert = details.get('certKey', '')
+            if cert:
+                Path('lightsail-cert.pub').write_text(cert + '\n')
+            print(f"SSH_USER={details.get('username', 'bitnami')}")
+            print(f"SSH_HOST={details.get('ipAddress', '65.2.9.216')}")
+            print("SSH_OPTS=-i lightsail.pem -o CertificateFile=lightsail-cert.pub -o StrictHostKeyChecking=no")
+            PY
+            chmod 600 lightsail.pem
+          else
+            echo "::error::Missing AWS credentials and LIGHTSAIL_SSH_KEY. Configure AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or LIGHTSAIL_SSH_KEY, then rerun this workflow."
+            exit 1
+          fi
 
       - name: Sync backend code to server
         run: |
@@ -26,23 +71,24 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude 'uploads' \
-            -e "ssh -i lightsail.pem -o StrictHostKeyChecking=no" \
-            ./backend/ bitnami@13.233.227.15:/home/bitnami/feriwala/backend/
+            -e "ssh $SSH_OPTS" \
+            ./backend/ "$SSH_USER@$SSH_HOST:/home/bitnami/feriwala/backend/"
 
       - name: Install dependencies and restart
         run: |
-          ssh -i lightsail.pem -o StrictHostKeyChecking=no bitnami@13.233.227.15 << 'EOF'
+          ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" << 'EOFSSH'
             set -e
             cd /home/bitnami/feriwala/backend
-            npm ci --production
+            npm ci --omit=dev || npm install --omit=dev
             cd ..
-            pm2 delete feriwala-api 2>/dev/null || true
-            pm2 start ecosystem.config.js
-            pm2 save
+            PM2_BIN=$(command -v pm2 || echo /opt/bitnami/node/lib/node_modules/pm2/bin/pm2)
+            "$PM2_BIN" delete feriwala-api 2>/dev/null || true
+            "$PM2_BIN" start ecosystem.config.js
+            "$PM2_BIN" save
             echo "=== Deployment complete ==="
-            pm2 status
-          EOF
+            "$PM2_BIN" status
+          EOFSSH
 
       - name: Cleanup SSH key
         if: always()
-        run: rm -f lightsail.pem
+        run: rm -f lightsail.pem lightsail-cert.pub access.json
